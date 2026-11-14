@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Bot</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Trading Bot</h1>
+  <span id="mode" class="badge">…</span>
+  <span><span id="dot" class="dot"></span><span id="status">connecting…</span></span>
+  <span id="mkt" class="muted"></span>
+  <a class="nav" href="/backtest">Backtest &rarr;</a>
+  <span class="spacer"></span>
+  <span id="msg"></span>
+  <button class="go" id="startBtn">Start</button>
+  <button id="stopBtn">Stop</button>
+  <button class="danger" id="flatBtn" title="Stop trading and sell every open position">Flatten all</button>
+</header>
+<main>
+  <div class="banner" id="halt"><b>HALTED</b><span id="haltMsg"></span><span class="spacer"></span><button id="clearHalt">Clear halt</button></div>
+  <section class="kpis">
+    <div class="card kpi"><div class="label">Equity</div><div class="val" id="kEq">–</div></div>
+    <div class="card kpi"><div class="label">Day P&amp;L</div><div class="val" id="kDay">–</div></div>
+    <div class="card kpi"><div class="label">Cash</div><div class="val" id="kCash">–</div></div>
+    <div class="card kpi"><div class="label">Unrealized</div><div class="val" id="kUnr">–</div></div>
+    <div class="card kpi"><div class="label">Realized (session)</div><div class="val" id="kReal">–</div></div>
+    <div class="card kpi"><div class="label">Win rate</div><div class="val" id="kWin">–</div></div>
+  </section>
+  <section class="grid2">
+    <div class="card"><h2>Price <span id="chSym" style="color:var(--text)"></span><span id="chRsi" class="muted"></span></h2><div class="chartbox"><canvas id="priceChart"></canvas></div></div>
+    <div class="card"><h2>Watchlist</h2><div class="scroll"><table><thead><tr><th>Symbol</th><th>Last</th><th>Chg</th><th>Signal</th></tr></thead><tbody id="watch"></tbody></table></div></div>
+  </section>
+  <section class="grid2">
+    <div class="card"><h2>Equity</h2><div class="chartbox" style="height:220px"><canvas id="eqChart"></canvas></div></div>
+    <div class="card"><h2>Open positions</h2><div class="scroll"><table><thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Last</th><th>P&amp;L <span id="posCcy"></span></th></tr></thead><tbody id="pos"></tbody></table></div></div>
+  </section>
+  <section class="card"><h2>Trades</h2><div class="scroll"><table><thead><tr><th>Time</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th><th>P&amp;L</th><th>Reason</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+  <section class="card">
+    <h2>Strategy &amp; risk</h2>
+    <form class="settings" id="settings">
+      <label style="grid-column:1/-1">Symbols (comma separated)<input name="symbols"></label>
+      <label>Strategy<select name="strategy"><option value="sma_cross">SMA crossover</option><option value="rsi_reversion">RSI mean reversion</option><option value="breakout">Breakout</option></select></label>
+      <label>SMA fast<input name="fast" type="number" min="2"></label>
+      <label>SMA slow<input name="slow" type="number" min="3"></label>
+      <label>RSI period<input name="rsi_period" type="number" min="2"></label>
+      <label>RSI buy below<input name="rsi_low" type="number" step="any"></label>
+      <label>RSI sell above<input name="rsi_high" type="number" step="any"></label>
+      <label>Breakout lookback<input name="breakout_lookback" type="number" min="2"></label>
+      <label>Position size (% equity)<input name="position_pct" type="number" step="any"></label>
+      <label>Max positions<input name="max_positions" type="number" min="1"></label>
+      <label>Stop loss %<input name="stop_loss_pct" type="number" step="any"></label>
+      <label>Take profit %<input name="take_profit_pct" type="number" step="any"></label>
+      <label>Re-entry cooldown (bars)<input name="cooldown_bars" type="number" min="0"></label>
+      <label>Max daily loss %<input name="max_daily_loss_pct" type="number" step="any"></label>
+      <label>&nbsp;<button type="submit">Apply settings</button></label>
+    </form>
+  </section>
+  <section class="card"><h2>Activity log</h2><div class="log" id="log"></div></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const usd = v => v == null ? '–' : (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const signed = v => v == null ? '–' : (v >= 0 ? '+' : '') + usd(v).replace('-', '−');
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const tstr = t => new Date(t * 1000).toLocaleTimeString();
+let selected = localStorageGet('sym'), settingsLoaded = false;
+function localStorageGet(k){try{return localStorage.getItem(k)}catch{return null}}
+function localStorageSet(k,v){try{localStorage.setItem(k,v)}catch{}}
+
+Chart.defaults.color = '#8b949e'; Chart.defaults.borderColor = '#21262d'; Chart.defaults.animation = false;
+const priceChart = new Chart($('priceChart'), {type:'line', data:{labels:[], datasets:[
+  {label:'Close', data:[], borderColor:'#e6edf3', borderWidth:1.5, pointRadius:0, tension:.1},
+  {label:'SMA fast', data:[], borderColor:'#58a6ff', borderWidth:1, pointRadius:0},
+  {label:'SMA slow', data:[], borderColor:'#d29922', borderWidth:1, pointRadius:0},
+  {label:'Buy', data:[], showLine:false, pointStyle:'triangle', pointRadius:7, backgroundColor:'#3fb950', borderColor:'#3fb950'},
+  {label:'Sell', data:[], showLine:false, pointStyle:'triangle', rotation:180, pointRadius:7, backgroundColor:'#f85149', borderColor:'#f85149'},
+]}, options:{maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, scales:{x:{ticks:{maxTicksLimit:8}}}, plugins:{legend:{labels:{boxWidth:10}}}}});
+const eqChart = new Chart($('eqChart'), {type:'line', data:{labels:[], datasets:[{data:[], borderColor:'#58a6ff', backgroundColor:'rgba(88,166,255,.12)', fill:true, borderWidth:1.5, pointRadius:0}]},
+  options:{maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{maxTicksLimit:6}}}}});
+
+async function api(path, body){
+  const r = await fetch(path, {method: body === undefined ? 'GET' : 'POST', headers:{'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+function flash(m){ $('msg').textContent = m; setTimeout(() => { if ($('msg').textContent === m) $('msg').textContent = '' }, 4000); }
+
+function render(s){
+  const m = $('mode'); m.textContent = s.mode.toUpperCase(); m.className = 'badge ' + s.mode;
+  $('dot').className = 'dot ' + (s.halted ? 'halt' : s.running ? 'on' : '');
+  $('status').textContent = s.halted ? 'Halted' : s.running ? 'Trading' : 'Stopped';
+  const base = s.base_currency || '';
+  const fxTxt = Object.entries(s.fx || {}).filter(([c]) => c !== base).map(([c, r]) => `${c}→${base} ${r.toFixed(4)}`).join(' · ');
+  $('mkt').textContent = (s.market_open ? 'Market open' : 'Market closed') + ` · tick ${s.interval}s` + (base ? ` · ${base} account` : '') + (fxTxt ? ` · ${fxTxt}` : '');
+  $('halt').style.display = s.halted ? 'flex' : 'none'; $('haltMsg').textContent = s.halted || '';
+
+  const a = s.account || {}, unr = Object.values(s.positions).reduce((x, p) => x + (p.unrealized_base ?? p.unrealized), 0);
+  $('kEq').textContent = usd(a.equity); $('kCash').textContent = usd(a.cash);
+  $('kDay').innerHTML = `<span class="${cls(s.day_pnl)}">${signed(s.day_pnl)} <small>(${s.day_pnl_pct.toFixed(2)}%)</small></span>`;
+  $('kUnr').innerHTML = `<span class="${cls(unr)}">${signed(unr)}</span>`;
+  $('kReal').innerHTML = `<span class="${cls(s.realized)}">${signed(s.realized)}</span>`;
+  $('kWin').textContent = s.win_rate == null ? '–' : `${s.win_rate.toFixed(0)}% (${s.closed_count})`;
+
+  $('watch').innerHTML = s.watch.map(w => `<tr class="click ${s.chart && w.symbol === s.chart.symbol ? 'sel' : ''}" data-sym="${w.symbol}">
+    <td><b>${w.symbol}</b>${w.held ? ' <span class="muted">●</span>' : ''}</td><td>${w.price.toFixed(2)}${w.currency !== base ? ` <small class="muted">${w.currency}</small>` : ''}</td>
+    <td class="${cls(w.chg)}">${w.chg.toFixed(2)}%</td><td>${w.signal ? `<span class="sig ${w.signal}">${w.signal}</span>` : ''}</td></tr>`).join('');
+
+  const pos = Object.entries(s.positions);
+  $('posCcy').textContent = base ? `(${base})` : '';
+  $('pos').innerHTML = pos.length ? pos.map(([k, p]) => `<tr><td><b>${k}</b></td><td>${p.qty}</td><td>${p.avg.toFixed(2)}</td><td>${p.price.toFixed(2)} <small class="muted">${p.currency}</small></td>
+    <td class="${cls(p.unrealized)}">${signed(p.unrealized_base ?? p.unrealized)} <small>(${((p.price - p.avg) / p.avg * 100).toFixed(2)}%)</small></td></tr>`).join('')
+    : '<tr><td colspan="5" class="muted">No open positions</td></tr>';
+
+  $('trades').innerHTML = s.trades.length ? s.trades.map(t => `<tr><td>${tstr(t.t)}</td><td class="${t.side === 'buy' ? 'up' : 'down'}">${t.side.toUpperCase()}</td>
+    <td>${t.symbol}</td><td>${t.qty}</td><td>${(+t.price).toFixed(2)}${t.currency && t.currency !== base ? ` <small class="muted">${t.currency}</small>` : ''}</td>
+    <td class="${cls(t.pnl_base ?? t.pnl)}" title="${t.pnl != null && t.currency !== base ? `${signed(t.pnl)} ${t.currency} before conversion` : ''}">${(t.pnl_base ?? t.pnl) == null ? '' : signed(t.pnl_base ?? t.pnl)}</td><td class="muted">${t.reason}</td></tr>`).join('')
+    : '<tr><td colspan="7" class="muted">No trades yet</td></tr>';
+
+  $('log').innerHTML = s.logs.map(l => `<div class="${l.level}">${tstr(l.t)}  ${l.msg}</div>`).join('');
+
+  const c = s.chart;
+  if (c){
+    $('chSym').textContent = c.symbol;
+    $('chRsi').textContent = c.rsi == null ? '' : `RSI ${c.rsi.toFixed(1)}`;
+    const idx = new Map(c.t.map((t, i) => [t, i]));
+    const buys = Array(c.t.length).fill(null), sells = Array(c.t.length).fill(null);
+    c.marks.forEach(mk => { const i = idx.get(mk.t); if (i != null) (mk.side === 'buy' ? buys : sells)[i] = mk.price; });
+    const d = priceChart.data;
+    d.labels = c.t.map(tstr); d.datasets[0].data = c.c; d.datasets[1].data = c.fast; d.datasets[2].data = c.slow;
+    d.datasets[3].data = buys; d.datasets[4].data = sells;
+    d.datasets[1].label = `SMA ${s.settings.fast}`; d.datasets[2].label = `SMA ${s.settings.slow}`;
+    priceChart.update();
+  }
+  eqChart.data.labels = s.equity_curve.map(e => tstr(e[0])); eqChart.data.datasets[0].data = s.equity_curve.map(e => e[1]); eqChart.update();
+
+  if (!settingsLoaded){
+    const f = $('settings');
+    for (const [k, v] of Object.entries(s.settings)) if (f.elements[k]) f.elements[k].value = Array.isArray(v) ? v.join(', ') : v;
+    settingsLoaded = true;
+  }
+}
+
+async function poll(){
+  try { render(await api('/api/state' + (selected ? '?symbol=' + encodeURIComponent(selected) : ''))); }
+  catch (e) { $('status').textContent = 'Disconnected'; $('dot').className = 'dot halt'; }
+  setTimeout(poll, 1000);
+}
+
+$('watch').addEventListener('click', e => { const tr = e.target.closest('tr[data-sym]'); if (tr){ selected = tr.dataset.sym; localStorageSet('sym', selected); } });
+const act = (path, ok, confirmMsg) => async () => {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  try { await api(path, {}); flash(ok); } catch (e) { flash(e.message); }
+};
+$('startBtn').onclick = act('/api/start', 'Trading started');
+$('stopBtn').onclick = act('/api/stop', 'Trading stopped');
+$('flatBtn').onclick = act('/api/flatten', 'All positions closed', 'Stop trading and sell every open position?');
+$('clearHalt').onclick = act('/api/clear-halt', 'Halt cleared');
+$('settings').onsubmit = async e => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  try { await api('/api/settings', data); flash('Settings applied'); } catch (err) { flash(err.message); }
+};
+poll();
+</script>
+</body>
+</html>
