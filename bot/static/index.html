@@ -22,6 +22,14 @@
 </header>
 <main>
   <div class="banner" id="halt"><b>HALTED</b><span id="haltMsg"></span><span class="spacer"></span><button id="clearHalt">Clear halt</button></div>
+  <section class="card approvals idle" id="apprCard">
+    <h2>Trade approvals <span id="apprCount" class="muted"></span><span class="spacer"></span>
+      <button type="button" id="notifyBtn" style="font-size:11px;padding:4px 10px">Turn on alerts</button></h2>
+    <div id="apprList"></div>
+    <details id="apprHistWrap"><summary class="muted" style="cursor:pointer;font-size:12px">Recent decisions</summary>
+      <div class="scroll" style="max-height:220px;margin-top:8px"><table><thead><tr><th>Time</th><th>Order</th><th>Outcome</th><th>Note</th></tr></thead><tbody id="apprHist"></tbody></table></div>
+    </details>
+  </section>
   <section class="kpis">
     <div class="card kpi"><div class="label">Equity</div><div class="val" id="kEq">–</div></div>
     <div class="card kpi"><div class="label">Day P&amp;L</div><div class="val" id="kDay">–</div></div>
@@ -56,6 +64,11 @@
       <label>Take profit %<input name="take_profit_pct" type="number" step="any"></label>
       <label>Re-entry cooldown (bars)<input name="cooldown_bars" type="number" min="0"></label>
       <label>Max daily loss %<input name="max_daily_loss_pct" type="number" step="any"></label>
+      <label class="check"><input name="require_approval" type="checkbox"> Ask before buying</label>
+      <label class="check"><input name="approve_exits" type="checkbox"> Ask before strategy sells</label>
+      <label>Approval timeout (s)<input name="approval_timeout_s" type="number" min="10"></label>
+      <label>Max price rise before approve %<input name="max_drift_pct" type="number" step="any" min="0"></label>
+      <label class="check"><input name="ai_summary" type="checkbox"> Claude summary on requests</label>
       <label>&nbsp;<button type="submit">Apply settings</button></label>
     </form>
   </section>
@@ -67,7 +80,10 @@ const usd = v => v == null ? '–' : (v < 0 ? '-' : '') + '$' + Math.abs(v).toLo
 const signed = v => v == null ? '–' : (v >= 0 ? '+' : '') + usd(v).replace('-', '−');
 const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
 const tstr = t => new Date(t * 1000).toLocaleTimeString();
-let selected = localStorageGet('sym'), settingsLoaded = false;
+let selected = localStorageGet('sym'), settingsLoaded = false, apprKey = '', seenReq = new Set();
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (v, c) => v == null ? '–' : `${(+v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} ${c || ''}`.trim();
+const pct = v => v == null ? '–' : `${v >= 0 ? '+' : ''}${(+v).toFixed(2)}%`;
 function localStorageGet(k){try{return localStorage.getItem(k)}catch{return null}}
 function localStorageSet(k,v){try{localStorage.setItem(k,v)}catch{}}
 
@@ -138,12 +154,104 @@ function render(s){
   }
   eqChart.data.labels = s.equity_curve.map(e => tstr(e[0])); eqChart.data.datasets[0].data = s.equity_curve.map(e => e[1]); eqChart.update();
 
+  renderApprovals(s);
+
   if (!settingsLoaded){
     const f = $('settings');
-    for (const [k, v] of Object.entries(s.settings)) if (f.elements[k]) f.elements[k].value = Array.isArray(v) ? v.join(', ') : v;
+    for (const [k, v] of Object.entries(s.settings)) {
+      const el = f.elements[k]; if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!v; else el.value = Array.isArray(v) ? v.join(', ') : v;
+    }
     settingsLoaded = true;
   }
 }
+
+function reqCard(r, s){
+  const f = r.facts || {}, o = f.order || {}, risk = f.risk, pos = f.position, acct = f.account || {}, mv = f.recent_moves_pct || {};
+  const base = o.account_currency || s.base_currency || '';
+  const side = r.side.toUpperCase();
+  const reasons = (f.strategy?.reasons || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li class="muted">No detail available</li>';
+  const riskHtml = risk ? `<ul>
+      <li>Stop loss ${money(risk.stop_loss, r.currency)} (${risk.stop_loss_pct}%)</li>
+      <li>Take profit ${money(risk.take_profit, r.currency)} (+${risk.take_profit_pct}%)</li>
+      <li>Loss if the stop is hit: about <b>${money(risk.loss_at_stop_in_account_currency, base)}</b></li>
+      ${risk.currency_note ? `<li class="muted">${esc(risk.currency_note)}</li>` : ''}</ul>`
+    : pos ? `<ul><li>Bought at ${money(pos.avg_cost, r.currency)}, now ${pct(pos.change_pct)}</li>
+      <li>Unrealized ${money(pos.unrealized_in_account_currency, base)}</li></ul>` : '';
+  const ai = r.ai_status === 'working' ? `<div class="ai muted">Claude is writing a summary…</div>`
+    : r.ai ? `<div class="ai ${r.ai_status === 'error' ? 'error' : ''}">${r.ai_status === 'error' ? '' : '<b>Claude:</b> '}${esc(r.ai)}</div>` : '';
+  return `<div class="req">
+    <div class="req-head"><span class="title ${r.side === 'buy' ? 'up' : 'down'}">${side} ${r.qty} ${esc(r.symbol)}</span>
+      <span>@ ${money(r.price, r.currency)} · ${money(o.value_in_account_currency, base)}${o.pct_of_equity != null ? ` (${o.pct_of_equity}% of equity)` : ''}</span>
+      <span class="timer" data-exp="${r.id}">${r.remaining}s</span></div>
+    <div class="req-grid">
+      <div><h3>Why: ${esc(f.strategy?.name || r.reason)}</h3><ul>${reasons}</ul></div>
+      <div><h3>${risk ? 'Risk plan' : 'Position'}</h3>${riskHtml}</div>
+      <div><h3>Context</h3><ul>
+        <li>Price move: last 5 bars ${pct(mv.last_5_bars)}, last 15 ${pct(mv.last_15_bars)}, last 60 ${pct(mv.last_60_bars)}</li>
+        <li>Positions in use: ${acct.positions_used} of ${acct.max_positions}</li>
+        <li>Today: ${pct(acct.day_pnl_pct)} (halts at ${acct.daily_loss_limit_pct}%)</li></ul></div>
+    </div>${ai}
+    <div class="req-actions"><button class="go" data-approve="${r.id}">Approve</button><button class="danger" data-reject="${r.id}">Reject</button></div>
+  </div>`;
+}
+
+function renderApprovals(s){
+  const list = s.pending || [];
+  const on = s.settings.require_approval;
+  $('apprCard').classList.toggle('idle', !list.length);
+  $('apprCount').textContent = list.length ? `(${list.length} waiting)` : '';
+  document.title = list.length ? `(${list.length}) Approve trade · Trading Bot` : 'Trading Bot';
+  // update cards in place so a button never disappears under the cursor
+  const box = $('apprList'), ids = new Set(list.map(r => r.id));
+  box.querySelectorAll(':scope > .empty').forEach(el => { if (list.length) el.remove(); });
+  box.querySelectorAll(':scope > .req').forEach(el => { if (!ids.has(el.dataset.id)) el.remove(); });
+  for (const r of list){
+    let el = box.querySelector(`:scope > .req[data-id="${r.id}"]`);
+    const ver = r.ai_status || '';
+    if (!el || el.dataset.ver !== ver){
+      const tmp = document.createElement('div'); tmp.innerHTML = reqCard(r, s);
+      const card = tmp.firstElementChild; card.dataset.id = r.id; card.dataset.ver = ver;
+      if (el) el.replaceWith(card); else box.appendChild(card);
+      el = card;
+    }
+    el.querySelector('.timer').textContent = r.remaining + 's';
+  }
+  const emptyKey = `${on}|${s.settings.approve_exits}|${s.ai_available}`;
+  if (!list.length && apprKey !== emptyKey){
+    apprKey = emptyKey;
+    box.innerHTML = `<div class="muted empty">${on ? 'Nothing waiting. New buys will appear here for you to approve' + (s.settings.approve_exits ? ', and strategy sells too.' : '. Stop losses and take profits run without asking.') : 'Approvals are off: the bot trades without asking. Turn on "Ask before buying" in Strategy &amp; risk.'}${on && !s.ai_available ? ' <span title="Set ANTHROPIC_API_KEY in .env and pip install anthropic">Claude summaries are off.</span>' : ''}</div>`;
+  }
+  if (list.length) apprKey = '';
+  for (const r of list) if (!seenReq.has(r.id)){
+    seenReq.add(r.id);
+    try { if (window.Notification && Notification.permission === 'granted')
+      new Notification(`Approve ${r.side.toUpperCase()} ${r.qty} ${r.symbol}?`, {body: `${r.reason} @ ${(+r.price).toFixed(2)} ${r.currency}`, tag: r.id}); } catch {}
+  }
+  const base = s.base_currency || '';
+  $('apprHist').innerHTML = (s.approval_log || []).map(r => `<tr><td>${tstr(r.resolved || r.created)}</td>
+    <td>${r.side.toUpperCase()} ${r.qty} ${esc(r.symbol)} @ ${(+r.price).toFixed(2)}</td>
+    <td><span class="status ${r.status}">${r.status}</span></td><td class="muted">${esc(r.note)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">No decisions yet</td></tr>';
+}
+
+$('apprList').addEventListener('click', async e => {
+  const a = e.target.closest('[data-approve]'), rj = e.target.closest('[data-reject]');
+  const btn = a || rj; if (!btn) return;
+  btn.disabled = true;
+  try {
+    if (a){ const r = await api(`/api/approvals/${a.dataset.approve}/approve`, {}); flash(`Sent: ${r.side.toUpperCase()} ${r.symbol}`); }
+    else { await api(`/api/approvals/${rj.dataset.reject}/reject`, {}); flash('Rejected'); }
+  } catch (err) { flash(err.message); btn.disabled = false; }
+});
+function syncNotifyBtn(){
+  const b = $('notifyBtn');
+  if (!window.Notification){ b.style.display = 'none'; return; }
+  b.textContent = Notification.permission === 'granted' ? 'Alerts on' : Notification.permission === 'denied' ? 'Alerts blocked' : 'Turn on alerts';
+  b.disabled = Notification.permission !== 'default';
+}
+$('notifyBtn').onclick = async () => { try { await Notification.requestPermission(); } catch {} syncNotifyBtn(); };
+syncNotifyBtn();
 
 async function poll(){
   try { render(await api('/api/state' + (selected ? '?symbol=' + encodeURIComponent(selected) : ''))); }
@@ -163,6 +271,7 @@ $('clearHalt').onclick = act('/api/clear-halt', 'Halt cleared');
 $('settings').onsubmit = async e => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(e.target));
+  for (const el of e.target.querySelectorAll('input[type=checkbox]')) data[el.name] = el.checked;
   try { await api('/api/settings', data); flash('Settings applied'); } catch (err) { flash(err.message); }
 };
 poll();

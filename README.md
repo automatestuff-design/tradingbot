@@ -45,6 +45,26 @@ Everything is measured in the account's **base currency**, which the bot reads f
 - **P&L:** each trade records P&L in the stock's currency and in CAD. The CAD figure uses the rate at entry and at exit, so it includes any currency gain or loss. Realized P&L, win rate and the dashboard totals are all in CAD.
 - **Backtests:** `bot.ib_download` also saves `data/USDCAD.csv` (1-minute midpoints) whenever your list includes a US symbol. The backtester uses that history; without it, it uses the fixed rate you give (`--usdcad`, or the field on the page) and shows a warning. The buy & hold benchmark includes the currency move too. Commissions are charged in the stock's currency.
 
+## Trade approvals
+By default the bot **asks before every new buy**. The order waits in the Trade approvals panel at the top of the dashboard with Approve and Reject buttons and a countdown.
+
+Each request explains itself:
+- **Why:** the strategy's exact numbers, for example "The 9-bar average (171.12) just crossed above the 21-bar average (170.85)".
+- **Risk plan:** stop loss and take profit prices, and roughly how much you'd lose in CAD if the stop is hit.
+- **Context:** recent price moves, positions in use, and today's P&L against the daily loss limit.
+- **Claude summary (optional):** with `ANTHROPIC_API_KEY` set in `.env` and `pip install anthropic`, Claude adds two or three plain sentences. It only rewords the facts above and points out anything that argues against the trade. It doesn't add news or predictions, and it isn't advice. Without a key, requests still show everything else.
+
+**Rules:**
+- Requests expire after `approval_timeout_s` (90s) and are dropped, never filled late.
+- When you approve, the bot re-checks first. It won't send a buy if the price rose more than `max_drift_pct` (0.5%) since the request, the market closed, trading halted, or buying power ran out.
+- Rejected or expired symbols aren't offered again for at least 5 bars (or `cooldown_bars`, if larger).
+- A buy waiting for approval counts toward `max_positions`.
+- **Stop loss, take profit, the daily loss limit and Flatten never wait for approval.** Strategy sell signals can also ask first if you tick "Ask before strategy sells".
+- Stopping the bot cancels anything waiting.
+- "Turn on alerts" shows a desktop notification for each new request while the dashboard is open.
+
+Turn approvals off with "Ask before buying" in Strategy & risk. The backtester never asks.
+
 ## How a tick works (`bot/engine.py`)
 1. Pull bars, account and positions from the broker.
 2. **Daily loss breaker:** if equity is down `max_daily_loss_pct` on the day, it sells everything and halts.
@@ -83,6 +103,7 @@ Backtest assumptions: fills at the bar close plus slippage, no partial fills, no
 - `bot/ibkr.py`: Interactive Brokers adapter (ib_async on a background event loop)
 - `bot/ib_download.py`: historical bar downloader for backtests
 - `bot/fx.py`: currency of each symbol and USD/CAD conversion
+- `bot/ai_summary.py`: optional Claude summary for approval requests
 - `bot/brokers.py`: `SimBroker` and `AlpacaBroker`
 - `bot/engine.py`: trading loop, risk checks, dashboard snapshot
 - `bot/backtest.py`: replay broker, data loaders, metrics, CLI
@@ -95,4 +116,5 @@ Backtest assumptions: fills at the bar close plus slippage, no partial fills, no
 - FX moves don't trigger stops. Stop loss and take profit look at the stock's own price change.
 - IB Gateway logs out daily and needs a weekly re-login; the bot reconnects every 30 seconds until it's back.
 - Settings changed in the dashboard reset when the server restarts.
+- Approvals happen on the dashboard, so someone has to have it open. Requests that nobody answers expire.
 - The IBKR adapter has been tested against a simulated IB client, but not yet against a real Gateway.

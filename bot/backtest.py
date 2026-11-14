@@ -182,6 +182,7 @@ class BacktestEngine(Engine):
         self.trades = deque()
         self.equity_curve = deque()
         self.persist = False
+        self.approvals_enabled = False  # replay trades straight through; nobody is there to approve
         self.warn_counts = defaultdict(int)
 
     def log(self, msg, level="info"):

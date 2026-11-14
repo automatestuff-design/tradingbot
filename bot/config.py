@@ -68,6 +68,12 @@ class Settings:
     cooldown_bars: int = 10              # no re-entry into a symbol for this many bars after exiting
     max_daily_loss_pct: float = 3.0      # flatten + halt if equity drops this % on the day
     tick_seconds: float = float(os.getenv("TICK_SECONDS", "0") or 0)  # 0 = mode default
+    # --- trade approvals (live/paper/sim only; the backtester never asks) ---
+    require_approval: bool = True        # new buys wait for Approve/Reject on the dashboard
+    approve_exits: bool = False          # also ask before strategy SELL signals (stops never wait)
+    approval_timeout_s: int = 90         # unanswered requests expire after this many seconds
+    max_drift_pct: float = 0.5           # refuse an approved buy if the price rose more than this since the request
+    ai_summary: bool = True              # add a Claude summary to requests when ANTHROPIC_API_KEY is set
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -81,6 +87,8 @@ class Settings:
                 if isinstance(v, str):
                     v = v.split(",")
                 v = [s.strip().upper() for s in v if s.strip()]
+            elif types[k] is bool:
+                v = v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "on")
             elif types[k] is int:
                 v = int(float(v))
             elif types[k] is float:
@@ -90,5 +98,7 @@ class Settings:
             setattr(self, k, v)
         if self.fast >= self.slow:
             raise ValueError("fast period must be smaller than slow period")
+        if self.approval_timeout_s < 10:
+            raise ValueError("approval timeout must be at least 10 seconds")
         if not (0 < self.position_pct <= 100):
             raise ValueError("position_pct must be between 0 and 100")

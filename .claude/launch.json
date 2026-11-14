@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard-sim",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["run.py"],
+      "env": {"MODE": "sim", "PORT": "8001"},
+      "port": 8001
+    }
+  ]
+}

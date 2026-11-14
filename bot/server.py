@@ -69,6 +69,7 @@ def start():
 @app.post("/api/stop")
 def stop():
     engine.running = False
+    engine.cancel_pending("bot stopped")
     engine.log("Trading STOPPED (open positions kept)", "warn")
     return {"ok": True}
 
@@ -84,6 +85,24 @@ async def flatten():
 @app.post("/api/clear-halt")
 def clear_halt():
     engine.reset_halt()
+    return {"ok": True}
+
+
+@app.post("/api/approvals/{rid}/approve")
+async def approve(rid: str):
+    try:
+        r = await engine.approve(rid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True, "symbol": r["symbol"], "side": r["side"]}
+
+
+@app.post("/api/approvals/{rid}/reject")
+def reject(rid: str):
+    try:
+        engine.reject(rid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 

@@ -70,3 +70,47 @@ def breakout(closes, s) -> Optional[str]:
 
 
 STRATEGIES = {"sma_cross": sma_cross, "rsi_reversion": rsi_reversion, "breakout": breakout}
+
+NAMES = {"sma_cross": "SMA crossover", "rsi_reversion": "RSI mean reversion", "breakout": "Breakout"}
+
+
+# ---------- explanations: the exact numbers behind a signal, for approval requests ----------
+def _explain_sma(closes, s):
+    f_now, s_now = sma(closes, s.fast), sma(closes, s.slow)
+    f_prev, s_prev = sma(closes[:-1], s.fast), sma(closes[:-1], s.slow)
+    if None in (f_now, s_now, f_prev, s_prev):
+        return []
+    direction = "above" if f_now > s_now else "below"
+    return [f"The {s.fast}-bar average ({f_now:.2f}) just crossed {direction} the {s.slow}-bar average ({s_now:.2f}); "
+            f"one bar earlier they were {f_prev:.2f} and {s_prev:.2f}."]
+
+
+def _explain_rsi(closes, s):
+    r = rsi(closes, s.rsi_period)
+    if r is None:
+        return []
+    if r < s.rsi_low:
+        return [f"RSI({s.rsi_period}) is {r:.1f}, below the buy level of {s.rsi_low:g}: the price has fallen quickly "
+                f"and the strategy bets on a bounce."]
+    return [f"RSI({s.rsi_period}) is {r:.1f}, above the sell level of {s.rsi_high:g}: the price has risen quickly "
+            f"and the strategy expects it to cool off."]
+
+
+def _explain_breakout(closes, s):
+    n = s.breakout_lookback
+    if len(closes) < n + 1:
+        return []
+    window = closes[-n - 1:-1]
+    hi, lo = max(window), min(window)
+    if closes[-1] > hi:
+        return [f"The price ({closes[-1]:.2f}) broke above the highest close of the previous {n} bars ({hi:.2f})."]
+    return [f"The price ({closes[-1]:.2f}) fell below the lowest close of the previous {n} bars ({lo:.2f})."]
+
+
+_EXPLAIN = {"sma_cross": _explain_sma, "rsi_reversion": _explain_rsi, "breakout": _explain_breakout}
+
+
+def explain(name, closes, s):
+    """Plain-language lines describing why `name` fired on these closes."""
+    fn = _EXPLAIN.get(name)
+    return fn(closes, s) if fn else []

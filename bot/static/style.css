@@ -46,3 +46,20 @@ fieldset{border:1px solid var(--line);border-radius:8px;padding:12px;margin:0 0 
 legend{color:var(--muted);font-size:12px;padding:0 6px;text-transform:uppercase;letter-spacing:.05em}
 .hint{color:var(--muted);font-size:12px;margin-top:8px}
 code{background:var(--bg);padding:1px 5px;border-radius:4px}
+.approvals{border-color:var(--warn)}
+.approvals.idle{border-color:var(--line)}
+.req{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--bg)}
+.req-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:8px}
+.req-head .title{font-size:16px;font-weight:700}
+.req-head .timer{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--warn);font-weight:600}
+.req-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 18px}
+.req h3{font-size:11px;margin:0 0 4px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.req ul{margin:0;padding-left:18px}
+.req li{margin:2px 0}
+.ai{margin-top:10px;padding:8px 10px;border-left:3px solid var(--accent);background:#111a26;border-radius:4px}
+.ai.error{border-left-color:var(--muted);color:var(--muted)}
+.req-actions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.req-actions button{min-width:110px}
+.status{font-size:11px;padding:1px 6px;border-radius:4px;font-weight:700;text-transform:uppercase}
+.status.approved{background:#12361f;color:var(--up)} .status.rejected,.status.failed,.status.stale{background:#3d1517;color:var(--down)}
+.status.expired,.status.cancelled,.status.superseded{background:#21262d;color:var(--muted)}
