@@ -65,6 +65,25 @@ Each request explains itself:
 
 Turn approvals off with "Ask before buying" in Strategy & risk. The backtester never asks.
 
+## Phone control (Telegram)
+Run the bot from your iPhone: start and stop trading, check status and positions, and get each approval request as a message with **Approve** and **Reject** buttons. You also get a message for every fill, the daily loss halt, and errors such as a lost IBKR connection.
+
+**One-time setup**
+1. Install Telegram on your iPhone. Message **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`. BotFather replies with a token like `123456:ABC...`.
+2. Put it in `.env` as `TELEGRAM_BOT_TOKEN=...` and restart the bot (`python run.py`).
+3. Open your new bot in Telegram and send it any message. It replies with your chat ID.
+4. Put that in `.env` as `TELEGRAM_CHAT_ID=...` and restart. The bot messages you that it's up, with buttons at the bottom of the chat.
+
+**Commands:** ▶️ Start trading (`/go`), ⏸ Stop trading (`/stop`), 📊 Status (`/status`), 📋 Positions (`/positions`), `/flatten` (sells everything after you confirm).
+
+**Keep it running.** The phone controls a server on this PC, so the PC has to be on and awake, with IB Gateway logged in.
+- `powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1` starts the server a minute after you log in to Windows and restarts it if it stops. Output goes to `logs\bot.log`. Trading always starts **stopped** until you tap Start. `scripts\remove_autostart.ps1` undoes it.
+- If IB Gateway isn't logged in, the server can't start; you get one Telegram message saying so, and it keeps retrying every minute.
+- Set Windows to never sleep while plugged in (Settings > System > Power & sleep).
+- In IB Gateway, turn on Configure > Settings > Lock and Exit > **Auto restart** so it stays logged in through IBKR's nightly restart. IBKR still asks you to log in again about once a week.
+
+**Security:** the bot only obeys the chat IDs in `TELEGRAM_CHAT_ID` and ignores everyone else. It polls Telegram over outbound HTTPS, so no port on this PC is opened to the internet. Approval details (symbol, size, prices) pass through Telegram's servers. Keep the bot token secret; if it leaks, send `/revoke` to @BotFather and update `.env`.
+
 ## How a tick works (`bot/engine.py`)
 1. Pull bars, account and positions from the broker.
 2. **Daily loss breaker:** if equity is down `max_daily_loss_pct` on the day, it sells everything and halts.
@@ -105,6 +124,8 @@ Backtest assumptions: fills at the bar close plus slippage, no partial fills, no
 - `bot/ib_check.py`: read-only connection check (`python -m bot.ib_check`); never places orders
 - `bot/fx.py`: currency of each symbol and USD/CAD conversion
 - `bot/ai_summary.py`: optional Claude summary for approval requests
+- `bot/telegram_bot.py`: phone control and approvals through Telegram
+- `scripts/`: start the server at Windows log-in (`install_autostart.ps1`, `start_bot.cmd`)
 - `bot/brokers.py`: `SimBroker` and `AlpacaBroker`
 - `bot/engine.py`: trading loop, risk checks, dashboard snapshot
 - `bot/backtest.py`: replay broker, data loaders, metrics, CLI
@@ -117,5 +138,6 @@ Backtest assumptions: fills at the bar close plus slippage, no partial fills, no
 - FX moves don't trigger stops. Stop loss and take profit look at the stock's own price change.
 - IB Gateway logs out daily and needs a weekly re-login; the bot reconnects every 30 seconds until it's back.
 - Settings changed in the dashboard reset when the server restarts.
-- Approvals happen on the dashboard, so someone has to have it open. Requests that nobody answers expire.
+- Approvals happen on the dashboard or in Telegram. Requests that nobody answers expire.
+- While trading is stopped, the bot does not watch stop losses or take profits on open positions.
 - The IBKR adapter has been tested against a simulated IB client, but not yet against a real Gateway.

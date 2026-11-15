@@ -367,6 +367,17 @@ class Engine:
         return out
 
     # ---------- controls ----------
+    def start(self, who="dashboard"):
+        if self.halted:
+            raise ValueError("Trading is halted by the daily loss limit. Clear the halt on the dashboard first.")
+        self.running = True
+        self.log(f"Trading STARTED from {who}", "warn")
+
+    def stop(self, who="dashboard"):
+        self.running = False
+        self.cancel_pending("bot stopped")
+        self.log(f"Trading STOPPED from {who} (open positions kept)", "warn")
+
     async def flatten(self):
         async with self.lock:
             self.positions = await self.call(self.broker.get_positions)

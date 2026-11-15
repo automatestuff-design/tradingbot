@@ -3,3 +3,4 @@ trades.jsonl
 __pycache__/
 .venv/
 data/
+logs/

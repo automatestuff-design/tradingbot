@@ -13,6 +13,7 @@ from .brokers import AlpacaBroker, SimBroker
 from .config import Connection, Settings
 from .engine import Engine
 from .strategies import STRATEGIES
+from .telegram_bot import TelegramBot, notify_startup_problem
 
 conn = Connection()
 conn.validate()
@@ -28,6 +29,7 @@ def make_broker():
     try:
         return IBKRBroker(conn.ib_host, conn.ib_port, conn.ib_client_id, conn.mode, conn.ib_account)
     except ConnectionError as e:
+        notify_startup_problem(str(e))
         raise SystemExit(f"\n{e}\n") from None
 
 
@@ -36,11 +38,17 @@ engine = Engine(settings, broker)
 STATIC = Path(__file__).resolve().parent / "static"
 
 
+phone = TelegramBot.from_env(engine)
+
+
 @asynccontextmanager
 async def lifespan(app):
-    task = asyncio.create_task(engine.run_forever())
+    tasks = [asyncio.create_task(engine.run_forever())]
+    if phone:
+        tasks.append(asyncio.create_task(phone.run()))
     yield
-    task.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 app = FastAPI(title="Trading Bot", lifespan=lifespan)
@@ -59,18 +67,16 @@ def state(symbol: str | None = None):
 
 @app.post("/api/start")
 def start():
-    if engine.halted:
-        raise HTTPException(409, "Engine is halted by the daily loss limit. Clear the halt first.")
-    engine.running = True
-    engine.log("Trading STARTED", "warn")
+    try:
+        engine.start()
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 
 @app.post("/api/stop")
 def stop():
-    engine.running = False
-    engine.cancel_pending("bot stopped")
-    engine.log("Trading STOPPED (open positions kept)", "warn")
+    engine.stop()
     return {"ok": True}
 
 
