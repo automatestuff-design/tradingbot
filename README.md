@@ -102,6 +102,7 @@ Backtest assumptions: fills at the bar close plus slippage, no partial fills, no
 ## Files
 - `bot/ibkr.py`: Interactive Brokers adapter (ib_async on a background event loop)
 - `bot/ib_download.py`: historical bar downloader for backtests
+- `bot/ib_check.py`: read-only connection check (`python -m bot.ib_check`); never places orders
 - `bot/fx.py`: currency of each symbol and USD/CAD conversion
 - `bot/ai_summary.py`: optional Claude summary for approval requests
 - `bot/brokers.py`: `SimBroker` and `AlpacaBroker`
